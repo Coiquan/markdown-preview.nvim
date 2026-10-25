@@ -153,6 +153,63 @@ function math_block (state, start, end, silent) {
   return true
 }
 
+// Recognize LaTeX \(...\) before markdown-it treats backslashes as escapes.
+function math_paren_inline (state, silent) {
+  if (state.src.slice(state.pos, state.pos + 2) !== '\\(') { return false }
+
+  const start = state.pos + 2
+  let end = start
+  while ((end = state.src.indexOf('\\)', end)) !== -1) {
+    // A closing delimiter preceded by another backslash is escaped.
+    let previousSlashes = 0
+    for (let i = end - 1; i >= start && state.src[i] === '\\'; i--) {
+      previousSlashes++
+    }
+    if (previousSlashes % 2 === 0) { break }
+    end += 2
+  }
+  if (end === -1) { return false }
+
+  if (!silent) {
+    const token = state.push('math_inline', 'math', 0)
+    token.markup = '\\('
+    token.content = state.src.slice(start, end)
+  }
+  state.pos = end + 2
+  return true
+}
+
+// Recognize LaTeX \[...\] when the opening delimiter starts a line.
+function math_bracket_block (state, start, end, silent) {
+  let pos = state.bMarks[start] + state.tShift[start]
+  let max = state.eMarks[start]
+  if (state.src.slice(pos, pos + 2) !== '\\[') { return false }
+
+  const lines = []
+  for (let line = start; line < end; line++) {
+    pos = state.bMarks[line] + state.tShift[line]
+    max = state.eMarks[line]
+    if (line > start && pos < max && state.tShift[line] < state.blkIndent) {
+      return false
+    }
+    const source = state.src.slice(pos + (line === start ? 2 : 0), max)
+    const close = source.lastIndexOf('\\]')
+    if (close !== -1 && /^\s*$/.test(source.slice(close + 2))) {
+      lines.push(source.slice(0, close))
+      if (silent) { return true }
+      const token = state.push('math_block', 'math', 0)
+      token.block = true
+      token.content = lines.join('\n').trim()
+      token.map = [start, line + 1]
+      token.markup = '\\['
+      state.line = line + 1
+      return true
+    }
+    lines.push(source)
+  }
+  return false
+}
+
 export default function math_plugin (md, options) {
   // Default options
 
@@ -198,6 +255,10 @@ export default function math_plugin (md, options) {
     return katexBlock(tokens[idx].content) + '\n'
   }
 
+  md.inline.ruler.before('escape', 'math_paren_inline', math_paren_inline)
+  md.block.ruler.before('paragraph', 'math_bracket_block', math_bracket_block, {
+    alt: [ 'paragraph', 'reference', 'blockquote', 'list' ]
+  })
   md.inline.ruler.after('escape', 'math_inline', math_inline)
   md.block.ruler.after('blockquote', 'math_block', math_block, {
     alt: [ 'paragraph', 'reference', 'blockquote', 'list' ]

@@ -1,0 +1,62 @@
+name: Build Markdown Preview web assets
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'app/pages/**'
+      - 'package.json'
+      - 'yarn.lock'
+      - '.github/workflows/build-markdown-preview.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: markdown-preview-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      # Next.js 7 / Webpack 4 are legacy packages. Node 16 avoids
+      # the OpenSSL 3 changes present in newer Node.js releases.
+      - name: Set up Node.js 16
+        uses: actions/setup-node@v4
+        with:
+          node-version: '16.20.2'
+
+      - name: Install Yarn Classic
+        run: npm install --global yarn@1.22.22
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --non-interactive
+
+      - name: Build browser preview
+        run: yarn build-app
+
+      - name: Validate exported assets
+        run: |
+          test -f app/out/index.html
+          test -d app/out/_next
+          du -sh app/out
+
+      - name: Commit built app/out to the fork
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A app/out
+          if git diff --cached --quiet; then
+            echo 'app/out is unchanged; nothing to commit.'
+            exit 0
+          fi
+          git commit -m 'build: update browser preview assets [skip ci]'
+          git push origin HEAD:master
